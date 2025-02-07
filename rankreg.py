@@ -23,7 +23,7 @@ def gaussian_basis(X, mus=None, sigma=None, nbases=10):
         X = X.reshape(-1,1)
     return rbf_kernel(X, mus, gamma=gamma), (mus, sigma)
 
-def add_gaussian_basis_2d(X, nbases):
+def add_gaussian_basis_2d(X, nbases=(10,10)):
     """
     Args:
     - X (array, (T,2))
@@ -37,7 +37,7 @@ def add_gaussian_basis_2d(X, nbases):
     return B, (mus1, sig1, mus2, sig2)
 
 class RankKRegression(BaseEstimator, RegressorMixin):
-    def __init__(self, rank=1, alpha=0.0, beta=0):
+    def __init__(self, rank=1, alpha=0.0, beta=0, max_iter=1000):
         """
         Rank-k STRF regression (sklearn-compatible model)
 
@@ -49,6 +49,7 @@ class RankKRegression(BaseEstimator, RegressorMixin):
         self.rank = rank
         self.alpha = alpha
         self.beta = beta
+        self.max_iter = max_iter
         self.coefficients_ = None  # Placeholder for model parameters
         self.w_ = None
         self.b_ = None
@@ -67,7 +68,7 @@ class RankKRegression(BaseEstimator, RegressorMixin):
         """
         X = np.asarray(X)
         y = np.asarray(y)
-        theta = rankreg(X, y, self.rank, alpha=self.alpha, beta=self.beta, verbose=verbose)
+        theta = rankreg(X, y, self.rank, alpha=self.alpha, beta=self.beta, verbose=verbose, max_iter=self.max_iter)
         self.coefficients_ = theta['C']
         self.intercept_ = theta['intercept']
         self.w_ = theta['w_h']
@@ -116,14 +117,14 @@ def rankreg(X, y, rank, mus=None, **args):
     M = augment(X, rank).transpose(1,2,0)
     # mus = np.tile(mus, rank)
     b_h, w_h = alternating_lsq(M, y, mus, **args)
-    theta = extract_theta(b_h, w_h)
+    theta = extract_theta(b_h, w_h, rank)
     return theta
 
-def extract_theta(b_h, w_h):
+def extract_theta(b_h, w_h, rank):
     C = b_h[:,None] @ w_h[None,:]
     intercept = w_h[0]*b_h[0]
-    w_h = w_h[1:]
-    b_h = b_h[1:]
+    w_h = w_h[1:].reshape(-1, rank)
+    b_h = b_h[1:].reshape(-1, rank)
     return {'C': C, 'b_h': b_h, 'w_h': w_h, 'intercept': intercept}
 
 def augment(M, ncopies):
@@ -154,12 +155,12 @@ def augment(M, ncopies):
         result[t] = add_bias_entry(B)
     return result
 
-def alternating_lsq(M, Y, mus, alpha=0, beta=0, maxiters=1000, tol=1e-6, verbose=True):
+def alternating_lsq(M, Y, mus, alpha=0, beta=0, max_iter=1000, tol=1e-6, verbose=True):
     nbases = M.shape[0]
     b_h = np.ones((nbases,))
     last_C = 0
     converged = False
-    for i in range(maxiters):
+    for i in range(max_iter):
         w_h = fit_w(M, b_h, Y, alpha=alpha)
         b_h = fit_b_fminunc(M, w_h, Y, mus, beta=beta)
         
@@ -172,13 +173,17 @@ def alternating_lsq(M, Y, mus, alpha=0, beta=0, maxiters=1000, tol=1e-6, verbose
             break
         last_C = C
     if verbose and not converged:
-        print(f'Stopped after reaching {maxiters=}.')
+        print(f'WARNING: Stopped after reaching {max_iter=}. Consider increasing max_iter to ensure convergence.')
     return b_h, w_h
 
 def fit_w(M, b, Y, alpha=0):
     B = mult_b(M, b)
     Reg = alpha * np.eye(B.shape[0])
-    return np.linalg.solve(B @ B.T + Reg, B @ Y.T)
+    try:
+        return np.linalg.solve(B @ B.T + Reg, B @ Y.T)
+    except np.linalg.LinAlgError:
+        print(f'Increasing regularization via alpha may fix this Singular matrix error. Currently {alpha=}.')
+        raise
 
 def mult_b(M, b):
     return np.einsum('ijk,i->jk', M, b)

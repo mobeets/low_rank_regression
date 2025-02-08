@@ -1,5 +1,6 @@
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.metrics.pairwise import rbf_kernel
+from scipy.linalg import block_diag
 import numpy as np
 
 def gaussian_basis(X, mus=None, sigma=None, nbases=10):
@@ -37,25 +38,25 @@ def add_gaussian_basis_2d(X, nbases=(10,10)):
     return B, (mus1, sig1, mus2, sig2)
 
 class RankKRegression(BaseEstimator, RegressorMixin):
-    def __init__(self, rank=1, alpha=0.0, beta=0, max_iter=1000):
+    def __init__(self, rank=1, alpha1=0.0, alpha2=0, max_iter=1000):
         """
         Rank-k STRF regression (sklearn-compatible model)
 
         Args:
             rank (int): the rank of the resulting linear weights
-            alpha (float): A hyperparameter for the model.
-            beta (float): Another hyperparameter.
+            alpha1 (float): strength of L2 prior on feature 1
+            alpha2 (float): strength of L2 prior on feature 2
         """
         self.rank = rank
-        self.alpha = alpha
-        self.beta = beta
+        self.alpha1 = alpha1
+        self.alpha2 = alpha2
         self.max_iter = max_iter
         self.coefficients_ = None  # Placeholder for model parameters
         self.w_ = None
         self.b_ = None
         self.intercept_ = None
 
-    def fit(self, X, y, verbose=True):
+    def fit(self, X, y, verbose=False):
         """
         Train the model.
 
@@ -68,7 +69,7 @@ class RankKRegression(BaseEstimator, RegressorMixin):
         """
         X = np.asarray(X)
         y = np.asarray(y)
-        theta = rankreg(X, y, self.rank, alpha=self.alpha, beta=self.beta, verbose=verbose, max_iter=self.max_iter)
+        theta = rankreg(X, y, rank=self.rank, alpha1=self.alpha1, alpha2=self.alpha2, verbose=verbose, max_iter=self.max_iter)
         self.coefficients_ = theta['C']
         self.intercept_ = theta['intercept']
         self.w_ = theta['w_h']
@@ -106,7 +107,7 @@ class RankKRegression(BaseEstimator, RegressorMixin):
         ss_residual = np.sum((y - y_pred) ** 2)
         return 1 - ss_residual / ss_total
 
-def rankreg(X, y, rank, mus=None, **args):
+def rankreg(X, y, rank, **args):
     """
     X (array; T x K x K)
     y (array; (T,))
@@ -115,8 +116,7 @@ def rankreg(X, y, rank, mus=None, **args):
     """
     # Augment and fit
     M = augment(X, rank).transpose(1,2,0)
-    # mus = np.tile(mus, rank)
-    b_h, w_h = alternating_lsq(M, y, mus, **args)
+    b_h, w_h = alternating_lsq(M, y, **args)
     theta = extract_theta(b_h, w_h, rank)
     return theta
 
@@ -128,20 +128,8 @@ def extract_theta(b_h, w_h, rank):
     return {'C': C, 'b_h': b_h, 'w_h': w_h, 'intercept': intercept}
 
 def augment(M, ncopies):
-    def block_diag_stack_numpy(X, ncopies):
-        """
-        return a block-diagonal matrix by stacking N copies of the matrix X
-        """
-        L, K = X.shape
-        B = np.zeros((ncopies*L, ncopies*K))
-        for i in range(ncopies):
-            B[i*L : (i+1)*L, i*K : (i+1)*K] = X
-        return B
-    
     def add_bias_entry(X):
-        """
-        adds a 1 in the upper left corner of M, for fitting the bias
-        """
+        """ adds a 1 in the upper left corner of M, for fitting the bias """
         L, K = X.shape
         B = np.zeros((L+1, K+1)) # Create a zero matrix of shape (T+1, K+1)
         B[0, 0] = 1 # Set the top-left element to 1
@@ -151,18 +139,24 @@ def augment(M, ncopies):
     T, L, K = M.shape
     result = np.zeros((T, 1+L*ncopies, 1+K*ncopies))
     for t in range(T):
-        B = block_diag_stack_numpy(M[t,:,:], ncopies)
+        B = block_diag(*(M[t,:,:],)*ncopies)
         result[t] = add_bias_entry(B)
     return result
 
-def alternating_lsq(M, Y, mus, alpha=0, beta=0, max_iter=1000, tol=1e-6, verbose=True):
+def alternating_lsq(M, Y, alpha1=0, alpha2=0, max_iter=1000, tol=1e-6, verbose=True):
     nbases = M.shape[0]
     b_h = np.ones((nbases,))
     last_C = 0
     converged = False
     for i in range(max_iter):
-        w_h = fit_w(M, b_h, Y, alpha=alpha)
-        b_h = fit_b_fminunc(M, w_h, Y, mus, beta=beta)
+        w_h = fit_w(M, b_h, Y, alpha1=alpha1)
+        w_h = w_h / np.linalg.norm(w_h)
+        b_h = fit_b(M, w_h, Y, alpha2=alpha2)
+        # b_h = b_h / np.linalg.norm(b_h)
+        # print(w_h.shape, M.shape, b_h.shape)
+        # s_h = w_h @ M @ b_h
+        # print(s_h, s_h.shape)
+        # return
         
         # use tol to decide when to stop
         C = b_h[:,None] @ w_h[None,:]
@@ -172,42 +166,47 @@ def alternating_lsq(M, Y, mus, alpha=0, beta=0, max_iter=1000, tol=1e-6, verbose
             converged = True
             break
         last_C = C
-    if verbose and not converged:
+    if not converged:
         print(f'WARNING: Stopped after reaching {max_iter=}. Consider increasing max_iter to ensure convergence.')
     return b_h, w_h
 
-def fit_w(M, b, Y, alpha=0):
+def fit_w(M, b, Y, alpha1=0):
     B = mult_b(M, b)
-    Reg = alpha * np.eye(B.shape[0])
+    Reg = alpha1 * np.eye(B.shape[0])
     try:
         return np.linalg.solve(B @ B.T + Reg, B @ Y.T)
     except np.linalg.LinAlgError:
-        print(f'Increasing regularization via alpha may fix this Singular matrix error. Currently {alpha=}.')
+        print(f'Increasing regularization via alpha1 may fix this Singular matrix error. Currently {alpha1=}.')
         raise
 
 def mult_b(M, b):
     return np.einsum('ijk,i->jk', M, b)
 
-def fit_b_fminunc(M, w, Y, mus, beta=0, sig=1.0):
-    b0 = fit_b(M, w, Y)
-    if beta == 0:
-        return b0
-    raise Exception("Not implemented.")
+# def fit_b_fminunc(M, w, Y, mus, beta=0, sig=1.0):
+#     b0 = fit_b(M, w, Y, beta=beta)
+#     if beta == 0:
+#         return b0
+#     raise Exception("Not implemented.")
     
-    W = mult_w(M, w)
-    loglike = lambda b: 0.5 / sig**2 * np.sum((Y - b @ W)**2)
+#     W = mult_w(M, w)
+#     loglike = lambda b: 0.5 / sig**2 * np.sum((Y - b @ W)**2)
     
-    S = norm.pdf(np.linspace(M.min(), M.max(), 100), mus)
-    D = np.eye(S.shape[0]) # placeholder smoothness prior
-    logprior = lambda b: beta / 2 * np.sum((b[1:] @ S.T) @ D @ (b[1:] @ S.T).T)
+#     S = norm.pdf(np.linspace(M.min(), M.max(), 100), mus)
+#     D = np.eye(S.shape[0]) # placeholder smoothness prior
+#     logprior = lambda b: beta / 2 * np.sum((b[1:] @ S.T) @ D @ (b[1:] @ S.T).T)
     
-    obj_fun = lambda b: loglike(b) + logprior(b)
-    res = minimize(obj_fun, b0, method='BFGS')
-    return res.x
+#     obj_fun = lambda b: loglike(b) + logprior(b)
+#     res = minimize(obj_fun, b0, method='BFGS')
+#     return res.x
 
-def fit_b(M, w, Y):
+def fit_b(M, w, Y, alpha2=0):
     W = mult_w(M, w)
-    return np.linalg.solve(W @ W.T, W @ Y.T)
+    Reg = alpha2 * np.eye(W.shape[0])
+    try:
+        return np.linalg.solve(W @ W.T + Reg, W @ Y.T)
+    except np.linalg.LinAlgError:
+        print(f'Increasing regularization via alpha2 may fix this Singular matrix error. Currently {alpha2=}.')
+        raise
 
 def mult_w(M, w):
     return np.einsum('ijk,j->ik', M, w)

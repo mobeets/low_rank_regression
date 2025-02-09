@@ -1,5 +1,7 @@
 # Low-rank Regression
 
+This code estimates models described in _Inferring input nonlinearities in neural encoding models_ (Ahrens et al., 2008), but with what seems to be a more robust/identifiable implementation.
+
 ## Overview
 
 Suppose you have 2D covariates $X \in \mathbb{R}^{L \times M}$, and observations $y \in \mathbb{R}$, and you would like to find weights $W \in \mathbb{R}^{L \times M}$ where:

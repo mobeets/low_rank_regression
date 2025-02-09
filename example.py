@@ -1,42 +1,60 @@
 #%% imports
 
 import numpy as np
-from rankreg import RankKRegression, add_gaussian_basis_2d
+from rankreg2 import RankKRegression, add_gaussian_basis_2d
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.model_selection import cross_val_score
+from scipy.stats import norm
 
 #%% generate fake data
 
-rng = np.random.default_rng(seed=234)
+rng = np.random.default_rng(seed=666)
 T = 1000
 X = rng.standard_normal((T,2))
-nse = 0.5*rng.standard_normal(T)
+nse = 0.1*rng.standard_normal(T)
 
 # sample a random rank-1 STRF
-B, _ = add_gaussian_basis_2d(X)
+B, (mus1, sig1, mus2, sig2) = add_gaussian_basis_2d(X)
 rank = 2
-C_true = 0
-for i in range(rank):
-    b_true = np.sort(rng.standard_normal(B.shape[1]))
-    w_true = np.sort(rng.standard_normal(B.shape[2]))
-    C_true += b_true[:,None] @ w_true[None,:]
-y = np.einsum('ijk,jk->i', B, C_true) + nse
+# sample gaussian pdfs or something
+U_true = norm.pdf(mus1, loc=rng.choice(mus1, rank).T, scale=1)
+V_true = norm.pdf(mus2, loc=rng.choice(mus2, rank).T, scale=1)
+# V_true = rng.standard_normal((B.shape[2],rank))
+C_true = 10 * (U_true @ V_true.T)
+y = np.einsum('tkm,km->t', B, C_true) + nse
 
 plt.imshow(C_true, aspect='auto', origin='lower', cmap='viridis'), plt.colorbar(), plt.title('True STRF'), plt.show()
 
+plt.subplot(2,2,2)
+h = plt.plot(mus1, U_true, '.-'), plt.xlabel('feature 1')
+plt.subplot(2,2,3)
+h = plt.plot(mus2, V_true, '.-'), plt.xlabel('feature 2')
+plt.subplot(2,2,4)
+plt.imshow(C_true, aspect='auto', origin='lower', cmap='viridis')
+plt.xticks([]); plt.yticks([])
+plt.colorbar()
+plt.xlabel('feature 2'), plt.ylabel('feature 1')
+plt.tight_layout()
+
+#%% improvements to make
+
+# 1. i don't think the augmenting step is necessary? chatgpt seemed to have an approach that didn't do this
+# 2. normalization in a way that accounts for multiple ranks (though changing as per 1 may fix this automatically)
+# 3. identifiability, via QR decomposition
+# 4. bias fitting prior to the QR decomposition
+# 5. computing model likelihoods and BIC?
+# 6. comparing additive vs rank-1 model in simulated data via BIC
+# 7. extension to populations using reduced-rank regression
+
 #%% get basis functions
 
-B, (mus1, sig1, mus2, sig2) = add_gaussian_basis_2d(X, nbases=(10,10))
+B, (mus1, sig1, mus2, sig2) = add_gaussian_basis_2d(X, nbases=(10,8))
 
 # fit low rank regression
-mdl = RankKRegression(rank=1, alpha1=0.0, max_iter=10000)
+mdl = RankKRegression(rank=2, alpha_u=0.01, alpha_v=0.01, max_iter=10000, verbose=True)
 mdl.fit(B, y)
 yhat = mdl.predict(B)
-mdl2 = RankKRegression(rank=1, alpha1=0.0, max_iter=10000)
-mdl2.fit(B, y - yhat)
-yhat2 = mdl2.predict(B)
-C = mdl.coefficients_[1:,1:] + mdl2.coefficients_[1:,1:]
 
 print('R^2: {:0.2f}'.format(mdl.score(B, y)))
 
@@ -44,11 +62,11 @@ print('R^2: {:0.2f}'.format(mdl.score(B, y)))
 plt.subplot(2,2,1)
 plt.plot(y, yhat, '.'), plt.xlabel('true y'), plt.ylabel('predicted y')
 plt.subplot(2,2,2)
-h = plt.plot(mus1, mdl.b_, '.-'), plt.xlabel('feature 1')
+h = plt.plot(mus1, mdl.U_, '.-'), plt.xlabel('feature 1')
 plt.subplot(2,2,3)
-h = plt.plot(mus2, mdl.w_, '.-'), plt.xlabel('feature 2')
+h = plt.plot(mus2, mdl.V_, '.-'), plt.xlabel('feature 2')
 plt.subplot(2,2,4)
-# C = mdl.coefficients_[1:,1:]
+C = mdl.U_ @ mdl.V_.T
 plt.imshow(C, aspect='auto', origin='lower', cmap='viridis')
 plt.xticks([]); plt.yticks([])
 plt.colorbar()

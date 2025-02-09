@@ -38,7 +38,7 @@ def add_gaussian_basis_2d(X, nbases=(10,10)):
     return B, (mus1, sig1, mus2, sig2)
 
 class RankKRegression(BaseEstimator, RegressorMixin):
-    def __init__(self, rank=1, alpha_u=0.0, alpha_v=0, max_iter=1000, verbose=False):
+    def __init__(self, rank=1, alpha_u=0.0, alpha_v=0, max_iter=5000, verbose=False):
         """
         Rank-k STRF regression (sklearn-compatible model)
 
@@ -118,7 +118,6 @@ def extract_theta(U, S, V):
     U = U[1:]
     V = V[1:]
     S = S
-    print(U.shape, S.shape, V.shape)
     C = (U @ np.diag(S) @ V.T)
     return {'C': C, 'U': U, 'V': V, 'S': S, 'intercept': intercept}
 

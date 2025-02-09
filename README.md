@@ -1,3 +1,6 @@
+# Low-rank Regression
+
+## Overview
 
 Suppose you have 2D covariates $X \in \mathbb{R}^{L \times M}$, and observations $y \in \mathbb{R}$, and you would like to find weights $W \in \mathbb{R}^{L \times M}$ where:
 
@@ -9,9 +12,15 @@ One possibility is that $W$ is low-rank, meaning it can be written as $W = U S V
 
 This code will perform low-rank linear regression for this setting.
 
+__Note: This is distinct from Reduced Rank Regression, which is when we have $Y$, a vector of observations, rather than a scalar $y$, as we do here.__
+
+## Simulations
+
 To illustrate, below we sample data using a constructed W which is rank-2:
 
 <img width="50%" src="plots/example_truth.png"/>
+
+W, or the "STRF", is the outer product of the vectors in U and V.
 
 We then use the resulting simulated data to estimate W using Rank-2 regression:
 

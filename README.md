@@ -16,6 +16,25 @@ This code will perform low-rank linear regression for this setting.
 
 __Note: This is distinct from Reduced Rank Regression, which is when we have $Y$, a vector of observations, rather than a scalar $y$, as we do here.__
 
+## Quickstart
+
+```python
+# load data:
+# - X is an array with shape (T, 2)
+# - y is an array with shape (T,)
+
+# represent X using gaussian basis functions for X[:,0] and X[:,1]
+B, basis_params = add_gaussian_basis_2d(X, nbases=(10,10)) # here we use K=10, M=10 basis functions
+# B is an array with shape (T, K, M), where K and M are the number of basis functions for X[:,0] and X[:,1], respectively
+# basis_params contains the basis function parameters: (mus1, sig1, mus2, sig2); you can also supply these to add_gaussian_basis_2d
+# alternatively, if X is discrete, with K possible values in X[:,0], and M possible values in X[:,1], then instead of using basis functions we want B to be a discrete representation of X, with shape (T, K, M)
+
+# create and fit a rank-1 model
+mdl = RankKRegression(rank=1, alpha_u=0.01, alpha_v=0.01) # the hyperparameters alpha_u and alpha_v act as regularizers
+mdl.fit(B, y) # find W such that y(t) ≈ B(t) * W
+yhat = mdl.predict(B) # get predictions
+```
+
 ## Simulations
 
 To illustrate, below we sample data using a constructed W which is rank-2:
